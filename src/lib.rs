@@ -4,12 +4,13 @@
 // ('$', 0x24), colon (':', 0x3A). - Nicknames MUST NOT start with a character listed as a
 // channel type, channel membership prefix, or prefix listed in the IRCv3 multi-prefix
 // Extension. - Nicknames SHOULD NOT contain any dot character ('.', 0x2E).
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code, unused_variables)]
 use std::{
-    fmt::{format, write},
-    net::{self, SocketAddr, TcpListener, TcpStream},
+    io::{Error, Write, WriterPanicked},
+    net::{SocketAddr, TcpStream},
     thread,
     time::Duration,
+    usize,
 };
 
 pub struct Client {
@@ -35,19 +36,6 @@ impl Client {
         })
     }
 }
-
-// connecting to the remote IRC server
-pub fn connect_to_server(client: Client) -> TcpStream {
-    let server_address: SocketAddr = format!("{}:{}", client.server, client.port_number)
-        .parse()
-        .expect("Parsing error!");
-    let stream = thread::spawn(move || {
-        TcpStream::connect_timeout(&server_address, Duration::new(5, 0))
-            .expect("Couldn't establish connection!")
-    });
-    todo!()
-}
-
 // checking validity according to the ruleset
 fn validate_nickname(nickname: &String) -> Result<String, &'static str> {
     let haystack = [" ", ",", "*", "?", "!", "@", "$", ":", "."];
@@ -59,4 +47,45 @@ fn validate_nickname(nickname: &String) -> Result<String, &'static str> {
     } else {
         Ok(nickname.to_string())
     }
+}
+
+// connecting to the remote IRC server
+pub fn connect(client: Client) -> TcpStream {
+    let server_address: SocketAddr = format!("{}:{}", client.server, client.port_number)
+        .parse()
+        .expect("Parsing error!");
+    let outgoing_stream = TcpStream::connect(&server_address).unwrap();
+    let message = format!("{} * * : {}", client.nick_name, client.nick_name);
+    command(&outgoing_stream, "NICK", &client.nick_name, &client)
+        .expect_err("Couldn't send the command.");
+    outgoing_stream
+}
+
+// What a typical exchange looks like
+//  foo.example.com                               bar.example.com
+//  +-------------+                               +-------------+
+//  |  IRC Client |                               |  IRC Server |
+//  +-------------+                               +-------------+
+//         |                                              |
+//         |  (1) NICK amy                                |
+//         | -------------------------------------------> |
+//         |                                              |
+//         |  (2) USER amy * * :Amy Pond                  |
+//         | -------------------------------------------> |
+//         |                                              |
+//         |  (3) :bar.example.com 001 amy :Welcome to    |
+//         |      the Internet Relay Network              |
+//         |      amy!amy@foo.example.com                 |
+//         | <------------------------------------------- |
+//         |                                              |
+fn command(
+    mut stream: &TcpStream,
+    command: &str,
+    message: &str,
+    client: &Client,
+) -> Result<usize, Error> {
+    let mut command = command.to_string();
+    command.push_str(" ");
+    command.push_str(message);
+    stream.write(command.as_bytes())
 }
