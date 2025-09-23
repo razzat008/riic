@@ -1,23 +1,16 @@
-// - Nicknames MUST NOT contain any of the following characters: space (' ', 0x20), comma (',',
-// 0x2C), asterisk ('*', 0x2A), question mark ('?', 0x3F), exclamation mark ('!', 0x21), at
-// sign ('@', 0x40). - Nicknames MUST NOT start with any of the following characters: dollar
-// ('$', 0x24), colon (':', 0x3A). - Nicknames MUST NOT start with a character listed as a
-// channel type, channel membership prefix, or prefix listed in the IRCv3 multi-prefix
-// Extension. - Nicknames SHOULD NOT contain any dot character ('.', 0x2E).
-#![allow(dead_code, unused_variables)]
+#![allow(unused_variables)]
 use std::{
-    io::{Error, Write, WriterPanicked},
-    net::{SocketAddr, TcpStream},
-    thread,
-    time::Duration,
-    usize,
+    io::{BufRead, BufReader, Error, Read, Write},
+    net::TcpStream,
+    thread::{self, JoinHandle},
 };
 
+#[derive(Clone)]
 pub struct Client {
     nick_name: String,
     server: String,
-    channel_name: String,
-    port_number: u16,
+    // channel_name: String,
+    port_number: u32,
 }
 
 // initializing parameters
@@ -31,9 +24,15 @@ impl Client {
         Ok(Client {
             nick_name,
             server: args[2].to_owned(),
-            channel_name: args[3].to_owned(),
-            port_number: args[4].to_owned().parse::<u16>().unwrap_or(80),
+            // channel_name: args[3].to_owned(),
+            port_number: args[3].to_owned().parse::<u32>().unwrap_or(6667),
         })
+    }
+
+    pub fn initialize_connection(&self) -> JoinHandle<()> {
+        let out_stream = connect(self.clone());
+        let in_stream = out_stream.try_clone().expect("Couldn't clone the stream");
+        thread::spawn(move || receiver(&in_stream).expect("Couldn't spawn a thread for receiver"))
     }
 }
 // checking validity according to the ruleset
@@ -41,23 +40,21 @@ fn validate_nickname(nickname: &String) -> Result<String, &'static str> {
     let haystack = [" ", ",", "*", "?", "!", "@", "$", ":", "."];
 
     if nickname.starts_with("#") {
-        Err("Nicknames cannot start with a '#'.")
+        Err("Nicknames cannot start with a '#'")
     } else if haystack.iter().any(|c| nickname.contains(c)) {
-        Err("Please enter a valid nickname(no special characters).")
+        Err("Please enter a valid nickname(no special characters)")
     } else {
         Ok(nickname.to_string())
     }
 }
 
 // connecting to the remote IRC server
-pub fn connect(client: Client) -> TcpStream {
-    let server_address: SocketAddr = format!("{}:{}", client.server, client.port_number)
-        .parse()
-        .expect("Parsing error!");
+fn connect(client: Client) -> TcpStream {
+    let server_address = format!("{}:{}", client.server, client.port_number);
     let outgoing_stream = TcpStream::connect(&server_address).unwrap();
-    let message = format!("{} * * : {}", client.nick_name, client.nick_name);
-    command(&outgoing_stream, "NICK", &client.nick_name, &client)
-        .expect_err("Couldn't send the command.");
+    let message = format!("{} * * :{}", client.nick_name, "This is a test.");
+    command(&outgoing_stream, "NICK", &client.nick_name, &client).unwrap();
+    command(&outgoing_stream, "USER", &message, &client).unwrap();
     outgoing_stream
 }
 
@@ -78,14 +75,33 @@ pub fn connect(client: Client) -> TcpStream {
 //         |      amy!amy@foo.example.com                 |
 //         | <------------------------------------------- |
 //         |                                              |
+
 fn command(
     mut stream: &TcpStream,
     command: &str,
     message: &str,
     client: &Client,
 ) -> Result<usize, Error> {
-    let mut command = command.to_string();
-    command.push_str(" ");
-    command.push_str(message);
-    stream.write(command.as_bytes())
+    let full_command = format!("{} {}\r\n", command, message);
+    stream.write(full_command.as_bytes())
+}
+
+// in_stream handling
+fn receiver(stream: &TcpStream) -> std::io::Result<()> {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    let mut i = 0;
+    line.clear();
+    loop {
+        let bytes_read = reader.read_line(&mut line).unwrap();
+        if bytes_read == 0 {
+            break;
+        }
+        let line = line.trim_end();
+        if !line.is_empty() {
+            println!("{}: {}", i, line);
+            i += 1;
+        }
+    }
+    Ok(())
 }
