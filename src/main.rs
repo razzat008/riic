@@ -1,4 +1,4 @@
-use std::{env, thread, process, sync::Arc};
+use std::{env, process, sync::Arc, thread};
 
 use riic::Client;
 fn main() {
@@ -8,6 +8,6 @@ fn main() {
         process::exit(0);
     });
 
-    let handle = build.initialize_connection();
-    handle.join().unwrap();
+    let handler = thread::spawn(move || build.initialize_connection());
+    let _ = handler.join();
 }
