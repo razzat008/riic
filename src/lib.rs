@@ -1,8 +1,10 @@
-#![allow(unused_variables)]
 use std::{
-    io::{BufRead, BufReader, Error, Write},
+    collections::HashMap,
+    fmt::format,
+    io::{self, BufRead, BufReader, Error, Read, Stdin, Write},
     net::TcpStream,
-    thread::{self, JoinHandle},
+    thread::{self},
+    vec,
 };
 
 #[derive(Clone)]
@@ -10,6 +12,7 @@ pub struct Client {
     nick_name: String,
     server: String,
     // channel_name: String,
+    commands: HashMap<&'static str, &'static str>,
     port_number: u32,
 }
 
@@ -20,20 +23,28 @@ impl Client {
             return Err("Not enough Arguments!");
         }
         let nick_name = validate_nickname(&args[1]).unwrap();
+        // setting up commands to send to the IRC server later on
+        let mut commands: HashMap<&'static str, &'static str> = HashMap::new();
+        commands.insert("/join", "/join <#channel>[,<#channel>]+ [<key>[,<key>]+]");
+        commands.insert("/kick", "/kick <#channel> <nick>[,<nick>]+ [:<reason>]");
+        commands.insert("/msg", " /msg <target>[,<target>]+ :<message> ");
+        commands.insert("/nick", " /nick <newnick>");
 
         Ok(Client {
             nick_name,
             server: args[2].to_owned(),
             // channel_name: args[3].to_owned(),
+            commands,
             port_number: args[3].to_owned().parse::<u32>().unwrap_or(6667),
         })
     }
 
-    pub fn initialize_connection(&self) -> JoinHandle<()> {
+    pub fn initialize_connection(&self) {
         let out_stream = connect(self.clone());
         let in_stream = out_stream.try_clone().expect("Couldn't clone the stream");
         let client_clone = self.clone();
-        thread::spawn(move || receiver(&in_stream, &client_clone).expect("Couldn't spawn thread"))
+        thread::spawn(move || receiver(&in_stream, &client_clone).expect("Couldn't spawn thread"));
+        sender(&self.clone(), &out_stream);
     }
 }
 // checking validity according to the ruleset
@@ -46,6 +57,50 @@ fn validate_nickname(nickname: &String) -> Result<String, &'static str> {
         Err("Please enter a valid nickname(no special characters)")
     } else {
         Ok(nickname.to_string())
+    }
+}
+
+fn validate_command_msg(msg: &str) {
+    if msg.len() > 3 {
+        todo!()
+    }
+}
+
+// handles sending of messages
+fn sender(client: &Client, stream: &TcpStream) {
+    loop {
+        let mut message: String = String::new();
+        match io::stdin().read_line(&mut message) {
+            Ok(_) => {
+                let msg: Vec<&str> = message.trim().split(' ').collect();
+                let cmd: &str = msg.get(0).unwrap();
+                match cmd {
+                    "help" => client
+                        .commands
+                        .iter()
+                        .for_each(|(key, value)| println!("{key},{value}")),
+                    "/join" => {
+                        let msg = msg.get(1).unwrap();
+                        command(&stream, "JOIN", &msg, &client).unwrap();
+                    }
+                    "/msg" => {
+                        let mut text = String::new();
+                        let receiver = msg.get(1).unwrap();
+                        msg.iter().for_each(|word| {
+                            text.push_str(&word);
+                            text.push_str(" ")
+                        });
+                        let message = format!("{} {}\r\n", receiver, text);
+
+                        command(&stream, "PRIVMSG", message.as_str(), client).unwrap();
+                    }
+                    _ => {
+                        println!("Cannot find command:{cmd}");
+                    }
+                }
+            }
+            Err(_) => todo!(),
+        }
     }
 }
 
@@ -92,8 +147,8 @@ fn receiver(stream: &TcpStream, client: &Client) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     let mut i = 0;
-    line.clear();
     loop {
+        line.clear();
         let bytes_read = reader.read_line(&mut line).unwrap();
         if bytes_read == 0 {
             break;
