@@ -28,7 +28,8 @@ impl Client {
         commands.insert("/join", "/join <#channel>[,<#channel>]+ [<key>[,<key>]+]");
         commands.insert("/kick", "/kick <#channel> <nick>[,<nick>]+ [:<reason>]");
         commands.insert("/msg", " /msg <target>[,<target>]+ :<message> ");
-        commands.insert("/nick", " /nick <newnick>");
+        commands.insert("/nick", "/nick <newnick>");
+        commands.insert("/part", "/part <#channel>[,<#channel>]+ [:<reason>]");
 
         Ok(Client {
             nick_name,
@@ -93,6 +94,11 @@ fn sender(client: &Client, stream: &TcpStream) {
                         let message = format!("{} {}\r\n", receiver, text);
 
                         command(&stream, "PRIVMSG", message.as_str(), client).unwrap();
+                    }
+                    "/part" => {
+                        let channel = msg.get(1).unwrap();
+                        command(&stream, "PART", channel, client).unwrap();
+
                     }
                     _ => {
                         println!("Cannot find command:{cmd}");
