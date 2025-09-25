@@ -1,6 +1,6 @@
 #![allow(unused_variables)]
 use std::{
-    io::{BufRead, BufReader, Error, Read, Write},
+    io::{BufRead, BufReader, Error, Write},
     net::TcpStream,
     thread::{self, JoinHandle},
 };
@@ -32,7 +32,8 @@ impl Client {
     pub fn initialize_connection(&self) -> JoinHandle<()> {
         let out_stream = connect(self.clone());
         let in_stream = out_stream.try_clone().expect("Couldn't clone the stream");
-        thread::spawn(move || receiver(&in_stream).expect("Couldn't spawn a thread for receiver"))
+        let client_clone = self.clone();
+        thread::spawn(move || receiver(&in_stream, &client_clone).expect("Couldn't spawn thread"))
     }
 }
 // checking validity according to the ruleset
@@ -51,8 +52,8 @@ fn validate_nickname(nickname: &String) -> Result<String, &'static str> {
 // connecting to the remote IRC server
 fn connect(client: Client) -> TcpStream {
     let server_address = format!("{}:{}", client.server, client.port_number);
-    let outgoing_stream = TcpStream::connect(&server_address).unwrap();
-    let message = format!("{} * * :{}", client.nick_name, "This is a test.");
+    let outgoing_stream = TcpStream::connect(&server_address).unwrap(); // nick registration
+    let message = format!("{} * * :{}", client.nick_name, "Jhon Doe"); // connection initiation
     command(&outgoing_stream, "NICK", &client.nick_name, &client).unwrap();
     command(&outgoing_stream, "USER", &message, &client).unwrap();
     outgoing_stream
@@ -87,7 +88,7 @@ fn command(
 }
 
 // in_stream handling
-fn receiver(stream: &TcpStream) -> std::io::Result<()> {
+fn receiver(stream: &TcpStream, client: &Client) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     let mut i = 0;
@@ -99,6 +100,11 @@ fn receiver(stream: &TcpStream) -> std::io::Result<()> {
         }
         let line = line.trim_end();
         if !line.is_empty() {
+            if let Some(pos) = line.find("PING :") {
+                let token = &line[pos + 6..pos + 16]; // length of "PING :" is 6
+                println!("====The position: {pos} and token is: {token}====");
+                command(&stream, "PONG", token, client).unwrap();
+            }
             println!("{}: {}", i, line);
             i += 1;
         }
